@@ -1,0 +1,83 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String   @id @default(cuid())
+  username     String   @unique
+  name         String
+  passwordHash String
+  role         String   @default("USER") // ADMIN | USER
+  quotaBytes   BigInt   @default(53687091200) // 50 GB
+  createdAt    DateTime @default(now())
+  media        Media[]
+  albums       Album[]
+  shares       AlbumShare[]
+}
+
+model Media {
+  id          String    @id @default(cuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  filename    String
+  relPath     String
+  thumbRel    String?
+  mime        String
+  category    String    @default("PHOTO") // PHOTO | VIDEO | SCREENSHOT | DOCUMENT
+  size        BigInt
+  sha256      String
+  width       Int?
+  height      Int?
+  takenAt     DateTime
+  uploadedAt  DateTime  @default(now())
+  favorite    Boolean   @default(false)
+  deletedAt   DateTime?
+  lat         Float?
+  lng         Float?
+  camera      String?
+  // Hooks for the local-AI indexer (OCR text, CLIP embedding) - filled by a worker, never by a cloud service
+  ocrText     String?
+  embedding   Bytes?
+  aiIndexedAt DateTime?
+  albums      AlbumMedia[]
+
+  @@unique([userId, sha256])
+  @@index([userId, takenAt])
+  @@index([userId, deletedAt])
+}
+
+model Album {
+  id        String       @id @default(cuid())
+  userId    String
+  user      User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name      String
+  coverId   String?
+  createdAt DateTime     @default(now())
+  items     AlbumMedia[]
+  shares    AlbumShare[]
+}
+
+model AlbumMedia {
+  albumId  String
+  mediaId  String
+  position Int    @default(0)
+  album    Album  @relation(fields: [albumId], references: [id], onDelete: Cascade)
+  media    Media  @relation(fields: [mediaId], references: [id], onDelete: Cascade)
+
+  @@id([albumId, mediaId])
+}
+
+model AlbumShare {
+  albumId String
+  userId  String
+  canAdd  Boolean @default(false)
+  album   Album   @relation(fields: [albumId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([albumId, userId])
+}

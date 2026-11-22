@@ -1,0 +1,14 @@
+services:
+  volta:
+    build: .
+    ports: ["3000:3000"]
+    environment:
+      DATABASE_URL: file:/data/vault.db
+      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET}
+      NEXTAUTH_URL: ${NEXTAUTH_URL:-http://nas.local:3000}
+      STORAGE_ROOT: /photos
+      ALLOW_SIGNUP: "true"
+    volumes:
+      - /mnt/nas/photos:/photos   # your NAS photo share
+      - ./data:/data              # database
+    restart: unless-stopped
