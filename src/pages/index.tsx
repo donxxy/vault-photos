@@ -36,6 +36,7 @@ export default function Photos() {
   const [pendingHideIds, setPendingHideIds] = useState<string[] | null>(null);
   const [passwordError, setPasswordError] = useState("");
   const [passwordBusy, setPasswordBusy] = useState(false);
+  const [changePasswordOpen, setChangePasswordOpen] = useState(false);
   const { pickFiles } = useUploader();
 
   const done = () => { setSelected(new Set()); void utils.media.list.invalidate(); void utils.media.stats.invalidate(); void utils.album.list.invalidate(); };
@@ -46,6 +47,7 @@ export default function Photos() {
   const setHidden = api.media.setHidden.useMutation({ onSuccess: done });
   const setHiddenPassword = api.media.setHiddenPassword.useMutation();
   const unlockHidden = api.media.unlockHidden.useMutation();
+  const changeHiddenPassword = api.media.changeHiddenPassword.useMutation({ onSuccess: () => setChangePasswordOpen(false) });
   const lockHidden = api.media.lockHidden.useMutation({
     onSuccess: () => {
       setOpen(null); setSelected(new Set());
@@ -126,7 +128,10 @@ export default function Photos() {
       ) : view === "hidden" ? (
         <div className="mb-4 flex items-center gap-3">
           <h1 className="text-2xl">Hidden Photos</h1>
-          {hiddenStatus.data?.unlocked && <button className="ml-auto rounded-full border border-neutral-300 px-4 py-1.5 text-sm hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-800" onClick={() => lockHidden.mutate()}>Lock now</button>}
+          {hiddenStatus.data?.unlocked && <>
+            <button className="ml-auto rounded-full border border-neutral-300 px-4 py-1.5 text-sm hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-800" onClick={() => { changeHiddenPassword.reset(); setChangePasswordOpen(true); }}>Change password</button>
+            <button className="rounded-full border border-neutral-300 px-4 py-1.5 text-sm hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-800" onClick={() => lockHidden.mutate()}>Lock now</button>
+          </>}
         </div>
       ) : view === "trash" ? (
         <div className="mb-4 flex items-center justify-between gap-3 rounded-lg bg-neutral-100 px-4 py-3 dark:bg-neutral-800">
@@ -198,6 +203,21 @@ export default function Photos() {
           error={passwordError}
           onSubmit={(password) => void submitHiddenPassword(password)}
           onClose={closePasswordDialog}
+        />
+      )}
+      {changePasswordOpen && (
+        <PasswordDialog
+          title="Change Hidden Photos password"
+          hint="Enter your current password, then choose and confirm a new one."
+          submitLabel="Change password"
+          confirm
+          currentPassword
+          busy={changeHiddenPassword.isLoading}
+          error={changeHiddenPassword.error?.message}
+          onSubmit={(password, currentPassword) => {
+            if (currentPassword) changeHiddenPassword.mutate({ password, currentPassword });
+          }}
+          onClose={() => { if (!changeHiddenPassword.isLoading) setChangePasswordOpen(false); }}
         />
       )}
     </AppShell>

@@ -6,18 +6,21 @@ type Props = {
   submitLabel: string;
   /** Ask for the password twice (used when creating a new one). */
   confirm?: boolean;
+  currentPassword?: boolean;
   busy?: boolean;
   error?: string;
-  onSubmit: (password: string) => void;
+  onSubmit: (password: string, currentPassword?: string) => void;
   onClose: () => void;
 };
 
-export function PasswordDialog({ title, hint, submitLabel, confirm, busy, error, onSubmit, onClose }: Props) {
+export function PasswordDialog({ title, hint, submitLabel, confirm, currentPassword, busy, error, onSubmit, onClose }: Props) {
   const [pw, setPw] = useState("");
   const [pw2, setPw2] = useState("");
+  const [current, setCurrent] = useState("");
   const [local, setLocal] = useState("");
   const first = useRef<HTMLInputElement>(null);
-  useEffect(() => first.current?.focus(), []);
+  const currentRef = useRef<HTMLInputElement>(null);
+  useEffect(() => (currentPassword ? currentRef.current : first.current)?.focus(), [currentPassword]);
   useEffect(() => {
     const key = (e: KeyboardEvent) => e.key === "Escape" && onClose();
     window.addEventListener("keydown", key);
@@ -26,10 +29,11 @@ export function PasswordDialog({ title, hint, submitLabel, confirm, busy, error,
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (currentPassword && !current) return setLocal("Enter your current password.");
     if (confirm && pw.length < 4) return setLocal("Use at least 4 characters.");
     if (confirm && pw !== pw2) return setLocal("The two passwords don't match.");
     setLocal("");
-    onSubmit(pw);
+    onSubmit(pw, currentPassword ? current : undefined);
   };
   const field = "h-11 w-full rounded-md border border-neutral-300 bg-transparent px-3 text-sm outline-none focus:border-brand focus:ring-1 focus:ring-brand dark:border-neutral-600";
 
@@ -42,13 +46,14 @@ export function PasswordDialog({ title, hint, submitLabel, confirm, busy, error,
         </h2>
         {hint && <p className="mb-4 text-sm text-neutral-500">{hint}</p>}
         <div className="space-y-3">
-          <input ref={first} className={field} type="password" placeholder="Password" autoComplete={confirm ? "new-password" : "current-password"} value={pw} onChange={(e) => setPw(e.target.value)} />
+          {currentPassword && <input ref={currentRef} className={field} type="password" placeholder="Current password" autoComplete="current-password" value={current} onChange={(e) => setCurrent(e.target.value)} />}
+          <input ref={first} className={field} type="password" placeholder={currentPassword ? "New password" : "Password"} autoComplete={confirm ? "new-password" : "current-password"} value={pw} onChange={(e) => setPw(e.target.value)} />
           {confirm && <input className={field} type="password" placeholder="Repeat password" autoComplete="new-password" value={pw2} onChange={(e) => setPw2(e.target.value)} />}
         </div>
         {(local || error) && <p role="alert" className="mt-3 text-sm text-red-600">{local || error}</p>}
         <div className="mt-5 flex justify-end gap-2">
           <button type="button" onClick={onClose} className="h-10 rounded-full px-4 text-sm hover:bg-neutral-100 dark:hover:bg-neutral-800">Cancel</button>
-          <button disabled={busy || !pw} className="h-10 rounded-full bg-brand px-5 text-sm font-medium text-white disabled:opacity-50">{busy ? "Please wait…" : submitLabel}</button>
+          <button disabled={busy || !pw || (currentPassword && !current)} className="h-10 rounded-full bg-brand px-5 text-sm font-medium text-white disabled:opacity-50">{busy ? "Please wait…" : submitLabel}</button>
         </div>
       </form>
     </div>

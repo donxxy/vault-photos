@@ -49,6 +49,25 @@ export const mediaRouter = createTRPCRouter({
       return { ok: true };
     }),
 
+  changeHiddenPassword: protectedProcedure.input(z.object({
+    currentPassword: z.string().max(128),
+    password: z.string().min(4).max(128),
+  })).mutation(async ({ ctx, input }) => {
+    const uid = ctx.session.user.id;
+    const key = `${uid}:${HIDDEN_UNLOCK_KEY}`;
+    if (tooManyAttempts(key)) throw new TRPCError({ code: "TOO_MANY_REQUESTS", message: "Too many wrong passwords. Try again in 10 minutes." });
+    const user = await ctx.db.user.findUniqueOrThrow({ where: { id: uid }, select: { hiddenPasswordHash: true } });
+    if (!user.hiddenPasswordHash) throw new TRPCError({ code: "BAD_REQUEST", message: "Set a Hidden Photos password first." });
+    if (!(await bcrypt.compare(input.currentPassword, user.hiddenPasswordHash))) {
+      recordFail(key);
+      throw new TRPCError({ code: "FORBIDDEN", message: "Wrong current password." });
+    }
+    clearFails(key);
+    await ctx.db.user.update({ where: { id: uid }, data: { hiddenPasswordHash: await bcrypt.hash(input.password, 12) } });
+    unlockAlbum(ctx.req, ctx.res, uid, HIDDEN_UNLOCK_KEY);
+    return { ok: true };
+  }),
+
   lockHidden: protectedProcedure.mutation(({ ctx }) => {
     lockAlbum(ctx.req, ctx.res, ctx.session.user.id, HIDDEN_UNLOCK_KEY);
     return { ok: true };
