@@ -4,14 +4,16 @@ import fs from "fs";
 import fsp from "fs/promises";
 import { authOptions } from "~/server/auth";
 import { findViewable, safeJoin } from "~/server/storage";
+import { readUnlocked } from "~/server/unlock";
 import { ensureThumb } from "~/server/thumbs";
 
 /** Streams originals and thumbnails with HTTP byte-range support (needed for video seeking). */
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   const session = await getServerSession(req, res, authOptions);
   if (!session?.user?.id) return res.status(401).end();
-  const m = await findViewable(session.user.id, String(req.query.id));
-  if (!m) return res.status(404).end();
+  const found = await findViewable(session.user.id, String(req.query.id), readUnlocked(req, session.user.id));
+  if (!found) return res.status(404).end();
+  const m = found.media;
 
   let thumb = req.query.thumb === "1" && !!m.thumbRel;
   let file: string;
@@ -29,7 +31,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   res.setHeader("Accept-Ranges", "bytes");
   res.setHeader("Content-Type", thumb ? "image/webp" : m.mime);
   // A thumbnail never changes for a given photo, so the browser can keep it for good.
-  res.setHeader("Cache-Control", thumb ? "private, max-age=31536000, immutable" : "private, max-age=3600");
+  // Hidden-album photos are never cached by the browser, so nothing stays on the device after locking.
+  res.setHeader("Cache-Control", found.hidden ? "no-store" : thumb ? "private, max-age=31536000, immutable" : "private, max-age=3600");
   if (req.query.download === "1")
     res.setHeader("Content-Disposition", `attachment; filename*=UTF-8''${encodeURIComponent(m.filename)}`);
 

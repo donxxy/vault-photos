@@ -4,6 +4,7 @@ import type { Media, Prisma } from "@prisma/client";
 import { z } from "zod";
 import { createTRPCRouter, protectedProcedure } from "../trpc";
 import { ROOT, purgeExpired, removeFiles } from "~/server/storage";
+import { readUnlocked } from "~/server/unlock";
 
 const pub = (m: Media) => ({
   id: m.id, filename: m.filename, mime: m.mime, category: m.category, size: Number(m.size),
@@ -22,24 +23,32 @@ export const mediaRouter = createTRPCRouter({
     .query(async ({ ctx, input }) => {
       const uid = ctx.session.user.id;
       if (input.view === "trash") await purgeExpired(uid);
+      const and: Prisma.MediaWhereInput[] = [];
+      // Photos in a hidden (password) album never show in the timeline, search, favorites, trash or memories.
+      const notHidden: Prisma.MediaWhereInput = { albums: { none: { album: { lockHash: { not: null } } } } };
       let where: Prisma.MediaWhereInput;
       if (input.albumId) {
         const a = await ctx.db.album.findFirst({
           where: { id: input.albumId, OR: [{ userId: uid }, { shares: { some: { userId: uid } } }] },
         });
         if (!a) throw new TRPCError({ code: "NOT_FOUND" });
+        const isLocked = a.lockHash !== null;
+        if (isLocked && !readUnlocked(ctx.req, uid).has(a.id)) throw new TRPCError({ code: "FORBIDDEN", message: "LOCKED" });
         where = { deletedAt: null, albums: { some: { albumId: a.id } } };
+        if (!isLocked) and.push(notHidden); // a photo that also sits in a hidden album stays out of ordinary albums
       } else {
         where = { userId: uid, deletedAt: input.view === "trash" ? { not: null } : null };
+        and.push(notHidden);
       }
       if (input.view === "favorites") where.favorite = true;
       if (input.view === "videos") where.category = "VIDEO";
       if (input.view === "screenshots") where.category = "SCREENSHOT";
       if (input.view === "recent") where.uploadedAt = { gte: new Date(Date.now() - 7 * 864e5) };
       if (input.q)
-        where.AND = [{ OR: [
+        and.push({ OR: [
           { filename: { contains: input.q } }, { camera: { contains: input.q } }, { ocrText: { contains: input.q } },
-        ] }];
+        ] });
+      if (and.length) where.AND = and;
       const rows = await ctx.db.media.findMany({
         where, take: 5000,
         orderBy: input.view === "recent" ? { uploadedAt: "desc" } : { takenAt: "desc" },
@@ -50,7 +59,10 @@ export const mediaRouter = createTRPCRouter({
   /** "On this day": photos taken on today's month/day in earlier years. */
   memories: protectedProcedure.query(async ({ ctx }) => {
     const rows = await ctx.db.media.findMany({
-      where: { userId: ctx.session.user.id, deletedAt: null, category: { in: ["PHOTO", "VIDEO"] } },
+      where: {
+        userId: ctx.session.user.id, deletedAt: null, category: { in: ["PHOTO", "VIDEO"] },
+        albums: { none: { album: { lockHash: { not: null } } } },
+      },
       select: { id: true, takenAt: true }, orderBy: { takenAt: "desc" },
     });
     const now = new Date();

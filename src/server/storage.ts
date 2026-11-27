@@ -24,14 +24,24 @@ export async function purgeExpired(userId: string) {
   if (old.length) await db.media.deleteMany({ where: { id: { in: old.map((m) => m.id) } } });
 }
 
-/** Owner can always read; other users only through an album shared with them. */
-export async function findViewable(userId: string, mediaId: string) {
+/**
+ * Owner can always read; other users only through an album shared with them.
+ * Photos inside a hidden (password) album are only served while that album is unlocked.
+ * `hidden` tells the caller to send no-cache headers for them.
+ */
+export async function findViewable(userId: string, mediaId: string, unlocked: Set<string> = new Set()) {
   const m = await db.media.findUnique({ where: { id: mediaId } });
   if (!m) return null;
-  if (m.userId === userId) return m;
+  const locks = await db.albumMedia.findMany({
+    where: { mediaId, album: { lockHash: { not: null } } },
+    select: { albumId: true },
+  });
+  const hidden = locks.length > 0;
+  if (hidden && !locks.some((l) => unlocked.has(l.albumId))) return null;
+  if (m.userId === userId) return { media: m, hidden };
   if (m.deletedAt) return null;
   const shared = await db.albumMedia.findFirst({
     where: { mediaId, album: { shares: { some: { userId } } } },
   });
-  return shared ? m : null;
+  return shared ? { media: m, hidden } : null;
 }

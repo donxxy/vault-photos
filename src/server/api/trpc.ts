@@ -7,6 +7,8 @@ import { db } from "~/server/db";
 
 export const createTRPCContext = async ({ req, res }: CreateNextContextOptions) => ({
   db,
+  req,
+  res,
   session: await getServerSession(req, res, authOptions),
 });
 
@@ -17,7 +19,7 @@ export const publicProcedure = t.procedure;
 
 export const protectedProcedure = t.procedure.use(({ ctx, next }) => {
   if (!ctx.session?.user?.id) throw new TRPCError({ code: "UNAUTHORIZED" });
-  return next({ ctx: { db: ctx.db, session: { ...ctx.session, user: ctx.session.user } } });
+  return next({ ctx: { db: ctx.db, req: ctx.req, res: ctx.res, session: { ...ctx.session, user: ctx.session.user } } });
 });
 
 export const adminProcedure = protectedProcedure.use(({ ctx, next }) => {

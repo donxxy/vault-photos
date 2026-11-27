@@ -57,6 +57,7 @@ model Album {
   user      User         @relation(fields: [userId], references: [id], onDelete: Cascade)
   name      String
   coverId   String?
+  lockHash  String?      // set = hidden album: password protected, photos leave the main library
   createdAt DateTime     @default(now())
   items     AlbumMedia[]
   shares    AlbumShare[]
