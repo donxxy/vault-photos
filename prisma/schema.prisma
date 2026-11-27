@@ -14,6 +14,7 @@ model User {
   passwordHash String
   role         String   @default("USER") // ADMIN | USER
   quotaBytes   BigInt   @default(53687091200) // 50 GB
+  hiddenPasswordHash String?
   createdAt    DateTime @default(now())
   media        Media[]
   albums       Album[]
@@ -36,6 +37,7 @@ model Media {
   takenAt     DateTime
   uploadedAt  DateTime  @default(now())
   favorite    Boolean   @default(false)
+  hiddenAt    DateTime?
   deletedAt   DateTime?
   lat         Float?
   lng         Float?

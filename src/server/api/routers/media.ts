@@ -1,10 +1,11 @@
 import { TRPCError } from "@trpc/server";
 import fsp from "fs/promises";
+import bcrypt from "bcryptjs";
 import type { Media, Prisma } from "@prisma/client";
 import { z } from "zod";
 import { createTRPCRouter, protectedProcedure } from "../trpc";
 import { ROOT, purgeExpired, removeFiles } from "~/server/storage";
-import { readUnlocked } from "~/server/unlock";
+import { clearFails, HIDDEN_UNLOCK_KEY, lockAlbum, readUnlocked, recordFail, tooManyAttempts, unlockAlbum } from "~/server/unlock";
 
 const pub = (m: Media) => ({
   id: m.id, filename: m.filename, mime: m.mime, category: m.category, size: Number(m.size),
@@ -14,9 +15,48 @@ const pub = (m: Media) => ({
 const ids = z.object({ ids: z.array(z.string()).min(1).max(1000) });
 
 export const mediaRouter = createTRPCRouter({
+  hiddenStatus: protectedProcedure.query(async ({ ctx }) => {
+    const user = await ctx.db.user.findUniqueOrThrow({ where: { id: ctx.session.user.id }, select: { hiddenPasswordHash: true } });
+    return {
+      configured: !!user.hiddenPasswordHash,
+      unlocked: readUnlocked(ctx.req, ctx.session.user.id).has(HIDDEN_UNLOCK_KEY),
+    };
+  }),
+
+  setHiddenPassword: protectedProcedure.input(z.object({ password: z.string().min(4).max(128) }))
+    .mutation(async ({ ctx, input }) => {
+      const uid = ctx.session.user.id;
+      const user = await ctx.db.user.findUniqueOrThrow({ where: { id: uid }, select: { hiddenPasswordHash: true } });
+      if (user.hiddenPasswordHash) throw new TRPCError({ code: "BAD_REQUEST", message: "A Hidden Photos password is already set." });
+      await ctx.db.user.update({ where: { id: uid }, data: { hiddenPasswordHash: await bcrypt.hash(input.password, 12) } });
+      unlockAlbum(ctx.req, ctx.res, uid, HIDDEN_UNLOCK_KEY);
+      return { ok: true };
+    }),
+
+  unlockHidden: protectedProcedure.input(z.object({ password: z.string().max(128) }))
+    .mutation(async ({ ctx, input }) => {
+      const uid = ctx.session.user.id;
+      const key = `${uid}:${HIDDEN_UNLOCK_KEY}`;
+      if (tooManyAttempts(key)) throw new TRPCError({ code: "TOO_MANY_REQUESTS", message: "Too many wrong passwords. Try again in 10 minutes." });
+      const user = await ctx.db.user.findUniqueOrThrow({ where: { id: uid }, select: { hiddenPasswordHash: true } });
+      if (!user.hiddenPasswordHash) throw new TRPCError({ code: "BAD_REQUEST", message: "Set a Hidden Photos password first." });
+      if (!(await bcrypt.compare(input.password, user.hiddenPasswordHash))) {
+        recordFail(key);
+        throw new TRPCError({ code: "FORBIDDEN", message: "Wrong password." });
+      }
+      clearFails(key);
+      unlockAlbum(ctx.req, ctx.res, uid, HIDDEN_UNLOCK_KEY);
+      return { ok: true };
+    }),
+
+  lockHidden: protectedProcedure.mutation(({ ctx }) => {
+    lockAlbum(ctx.req, ctx.res, ctx.session.user.id, HIDDEN_UNLOCK_KEY);
+    return { ok: true };
+  }),
+
   list: protectedProcedure
     .input(z.object({
-      view: z.enum(["all", "favorites", "videos", "screenshots", "recent", "trash"]).default("all"),
+      view: z.enum(["all", "favorites", "videos", "screenshots", "recent", "trash", "hidden"]).default("all"),
       q: z.string().trim().max(100).optional(),
       albumId: z.string().optional(),
     }))
@@ -24,17 +64,25 @@ export const mediaRouter = createTRPCRouter({
       const uid = ctx.session.user.id;
       if (input.view === "trash") await purgeExpired(uid);
       const and: Prisma.MediaWhereInput[] = [];
-      // Photos in a hidden (password) album never show in the timeline, search, favorites, trash or memories.
-      const notHidden: Prisma.MediaWhereInput = { albums: { none: { album: { lockHash: { not: null } } } } };
+      const notHidden: Prisma.MediaWhereInput = {
+        hiddenAt: null, albums: { none: { album: { lockHash: { not: null } } } },
+      };
       let where: Prisma.MediaWhereInput;
-      if (input.albumId) {
+      if (input.view === "hidden") {
+        if (!readUnlocked(ctx.req, uid).has(HIDDEN_UNLOCK_KEY))
+          throw new TRPCError({ code: "FORBIDDEN", message: "Unlock Hidden Photos first." });
+        where = {
+          userId: uid, deletedAt: null,
+          OR: [{ hiddenAt: { not: null } }, { albums: { some: { album: { lockHash: { not: null } } } } }],
+        };
+      } else if (input.albumId) {
         const a = await ctx.db.album.findFirst({
           where: { id: input.albumId, OR: [{ userId: uid }, { shares: { some: { userId: uid } } }] },
         });
         if (!a) throw new TRPCError({ code: "NOT_FOUND" });
         const isLocked = a.lockHash !== null;
         if (isLocked && !readUnlocked(ctx.req, uid).has(a.id)) throw new TRPCError({ code: "FORBIDDEN", message: "LOCKED" });
-        where = { deletedAt: null, albums: { some: { albumId: a.id } } };
+        where = { deletedAt: null, hiddenAt: null, albums: { some: { albumId: a.id } } };
         if (!isLocked) and.push(notHidden); // a photo that also sits in a hidden album stays out of ordinary albums
       } else {
         where = { userId: uid, deletedAt: input.view === "trash" ? { not: null } : null };
@@ -60,7 +108,7 @@ export const mediaRouter = createTRPCRouter({
   memories: protectedProcedure.query(async ({ ctx }) => {
     const rows = await ctx.db.media.findMany({
       where: {
-        userId: ctx.session.user.id, deletedAt: null, category: { in: ["PHOTO", "VIDEO"] },
+        userId: ctx.session.user.id, deletedAt: null, hiddenAt: null, category: { in: ["PHOTO", "VIDEO"] },
         albums: { none: { album: { lockHash: { not: null } } } },
       },
       select: { id: true, takenAt: true }, orderBy: { takenAt: "desc" },
@@ -87,6 +135,22 @@ export const mediaRouter = createTRPCRouter({
 
   setFavorite: protectedProcedure.input(ids.extend({ value: z.boolean() })).mutation(({ ctx, input }) =>
     ctx.db.media.updateMany({ where: { id: { in: input.ids }, userId: ctx.session.user.id }, data: { favorite: input.value } })),
+
+  setHidden: protectedProcedure.input(ids.extend({ hidden: z.boolean() })).mutation(async ({ ctx, input }) => {
+    const uid = ctx.session.user.id;
+    if (!input.hidden && !readUnlocked(ctx.req, uid).has(HIDDEN_UNLOCK_KEY))
+      throw new TRPCError({ code: "FORBIDDEN", message: "Unlock Hidden Photos before unhiding items." });
+    const result = await ctx.db.media.updateMany({
+      where: { id: { in: input.ids }, userId: uid },
+      data: { hiddenAt: input.hidden ? new Date() : null },
+    });
+    if (!input.hidden) {
+      await ctx.db.albumMedia.deleteMany({
+        where: { mediaId: { in: input.ids }, album: { userId: uid, lockHash: { not: null } } },
+      });
+    }
+    return { updated: result.count };
+  }),
 
   trash: protectedProcedure.input(ids).mutation(({ ctx, input }) =>
     ctx.db.media.updateMany({ where: { id: { in: input.ids }, userId: ctx.session.user.id }, data: { deletedAt: new Date() } })),

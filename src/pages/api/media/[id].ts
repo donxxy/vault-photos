@@ -31,7 +31,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   res.setHeader("Accept-Ranges", "bytes");
   res.setHeader("Content-Type", thumb ? "image/webp" : m.mime);
   // A thumbnail never changes for a given photo, so the browser can keep it for good.
-  // Hidden-album photos are never cached by the browser, so nothing stays on the device after locking.
+  // Hidden photos are never cached by the browser, so they are not reused after locking.
   res.setHeader("Cache-Control", found.hidden ? "no-store" : thumb ? "private, max-age=31536000, immutable" : "private, max-age=3600");
   if (req.query.download === "1")
     res.setHeader("Content-Disposition", `attachment; filename*=UTF-8''${encodeURIComponent(m.filename)}`);

@@ -12,7 +12,7 @@ type Ctx = { v?: string; p: string; tab?: string; album?: string };
 const NAV = [
   { href: "/", label: "Photos", icon: <Ic.Photo />, tab: true, match: ({ v, p, album }: Ctx) => p === "/" && !v && !album },
   { href: "/albums", label: "Albums", icon: <Ic.Album />, tab: true, match: ({ p, tab, album }: Ctx) => (p === "/albums" && tab !== "shared") || (p === "/" && !!album) },
-  { href: "/albums?tab=hidden", label: "Hidden", icon: <Ic.Lock />, tab: false, match: ({ p, tab }: Ctx) => p === "/albums" && tab === "hidden" },
+  { href: "/?view=hidden", label: "Hidden", icon: <Ic.Lock />, tab: false, match: ({ v }: Ctx) => v === "hidden" },
   { href: "/albums?tab=shared", label: "Sharing", icon: <Ic.People />, tab: true, match: ({ p, tab }: Ctx) => p === "/albums" && tab === "shared" },
   { href: "/?view=favorites", label: "Favorites", icon: <Ic.Star />, tab: false, match: ({ v }: Ctx) => v === "favorites" },
   { href: "/?view=trash", label: "Trash", icon: <Ic.Trash />, tab: false, match: ({ v }: Ctx) => v === "trash" },
@@ -87,6 +87,8 @@ function Header({ override }: { override?: ReactNode }) {
 export function AppShell({ children, headerOverride }: { children: ReactNode; headerOverride?: ReactNode }) {
   const router = useRouter();
   const { status, data: session } = useSession({ required: true });
+  const utils = api.useContext();
+  const lockHidden = api.media.lockHidden.useMutation({ onError: (e) => alert(e.message) });
   const [more, setMore] = useState(false);
   useEffect(() => setMore(false), [router.asPath]);
   if (status !== "authenticated") return <div className="grid min-h-screen place-items-center text-sm text-neutral-500">Loading…</div>;
@@ -110,6 +112,17 @@ export function AppShell({ children, headerOverride }: { children: ReactNode; he
               const on = n.match(ctx);
               return (
                 <Link key={n.href} href={n.href} aria-current={on ? "page" : undefined}
+                  onClick={(e) => {
+                    if (n.href !== "/?view=hidden") return;
+                    e.preventDefault();
+                    lockHidden.mutate(undefined, {
+                      onSuccess: () => {
+                        void utils.media.hiddenStatus.invalidate();
+                        void utils.media.list.invalidate();
+                        void router.push(n.href);
+                      },
+                    });
+                  }}
                   className={`flex items-center gap-4 rounded-full px-4 py-2.5 text-sm ${on ? "bg-blue-50 font-medium text-brand dark:bg-blue-950" : "hover:bg-neutral-100 dark:hover:bg-neutral-800"}`}>{n.icon}{n.label}</Link>
               );
             })}
@@ -143,7 +156,18 @@ export function AppShell({ children, headerOverride }: { children: ReactNode; he
             <div className="mx-auto mt-2 h-1 w-10 rounded bg-neutral-300 dark:bg-neutral-700" />
             <ul className="p-2">
               {moreItems.map((n) => (
-                <li key={n.href}><Link href={n.href} className="flex items-center gap-4 rounded-lg px-4 py-3 text-sm hover:bg-neutral-100 dark:hover:bg-neutral-800">{n.icon}{n.label}</Link></li>
+                <li key={n.href}><Link href={n.href} onClick={(e) => {
+                  setMore(false);
+                  if (n.href !== "/?view=hidden") return;
+                  e.preventDefault();
+                  lockHidden.mutate(undefined, {
+                    onSuccess: () => {
+                      void utils.media.hiddenStatus.invalidate();
+                      void utils.media.list.invalidate();
+                      void router.push(n.href);
+                    },
+                  });
+                }} className="flex items-center gap-4 rounded-lg px-4 py-3 text-sm hover:bg-neutral-100 dark:hover:bg-neutral-800">{n.icon}{n.label}</Link></li>
               ))}
               <li><Link href="/account" className="flex items-center gap-4 rounded-lg px-4 py-3 text-sm hover:bg-neutral-100 dark:hover:bg-neutral-800"><Ic.Shield />Change password</Link></li>
               <li><button onClick={toggleTheme} className="flex w-full items-center gap-4 rounded-lg px-4 py-3 text-sm hover:bg-neutral-100 dark:hover:bg-neutral-800"><Ic.Moon />Dark mode</button></li>

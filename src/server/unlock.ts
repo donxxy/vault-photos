@@ -2,12 +2,13 @@ import crypto from "crypto";
 import type { IncomingMessage, ServerResponse } from "http";
 
 /**
- * "Unlocked" state for password-protected (hidden) albums.
+ * Short-lived unlocked state for Hidden Photos and legacy password-protected albums.
  * It lives in a signed, httpOnly cookie that expires after 15 minutes, so a phone left open
- * goes back to locked by itself. The cookie only says WHICH albums were unlocked, never any password.
+ * goes back to locked by itself. The cookie records unlocked IDs, never any password.
  */
 const COOKIE = "volta_unlock";
 const TTL_MS = 15 * 60 * 1000;
+export const HIDDEN_UNLOCK_KEY = "hidden-photos";
 
 type Payload = { u: string; a: Record<string, number> }; // user id, album id -> expiry (ms)
 
@@ -50,7 +51,7 @@ function write(res: ServerResponse, userId: string, entries: Record<string, numb
   );
 }
 
-/** Album ids this user has unlocked (and that have not expired). */
+/** Hidden-section or album IDs this user has unlocked (and that have not expired). */
 export const readUnlocked = (req: IncomingMessage, userId: string) => new Set(Object.keys(readEntries(req, userId)));
 
 export function unlockAlbum(req: IncomingMessage, res: ServerResponse, userId: string, albumId: string) {

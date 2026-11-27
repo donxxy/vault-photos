@@ -1,6 +1,7 @@
 import path from "path";
 import fsp from "fs/promises";
 import { db } from "./db";
+import { HIDDEN_UNLOCK_KEY } from "./unlock";
 
 export const ROOT = path.resolve(process.env.STORAGE_ROOT ?? "./storage");
 
@@ -26,7 +27,7 @@ export async function purgeExpired(userId: string) {
 
 /**
  * Owner can always read; other users only through an album shared with them.
- * Photos inside a hidden (password) album are only served while that album is unlocked.
+ * Hidden photos are only served while the Hidden Photos section or a legacy hidden album is unlocked.
  * `hidden` tells the caller to send no-cache headers for them.
  */
 export async function findViewable(userId: string, mediaId: string, unlocked: Set<string> = new Set()) {
@@ -36,8 +37,8 @@ export async function findViewable(userId: string, mediaId: string, unlocked: Se
     where: { mediaId, album: { lockHash: { not: null } } },
     select: { albumId: true },
   });
-  const hidden = locks.length > 0;
-  if (hidden && !locks.some((l) => unlocked.has(l.albumId))) return null;
+  const hidden = m.hiddenAt !== null || locks.length > 0;
+  if (hidden && !unlocked.has(HIDDEN_UNLOCK_KEY) && !locks.some((l) => unlocked.has(l.albumId))) return null;
   if (m.userId === userId) return { media: m, hidden };
   if (m.deletedAt) return null;
   const shared = await db.albumMedia.findFirst({
