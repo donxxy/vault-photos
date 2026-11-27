@@ -158,7 +158,7 @@ export const mediaRouter = createTRPCRouter({
   restore: protectedProcedure.input(ids).mutation(({ ctx, input }) =>
     ctx.db.media.updateMany({ where: { id: { in: input.ids }, userId: ctx.session.user.id }, data: { deletedAt: null } })),
 
-  deleteForever: protectedProcedure.input(ids).mutation(async ({ ctx, input }) => {
+  deleteForever: protectedProcedure.input(z.object({ ids: z.array(z.string()).min(1).max(5000) })).mutation(async ({ ctx, input }) => {
     const rows = await ctx.db.media.findMany({
       where: { id: { in: input.ids }, userId: ctx.session.user.id, deletedAt: { not: null } },
     });

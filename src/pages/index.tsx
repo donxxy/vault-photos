@@ -59,6 +59,7 @@ export default function Photos() {
 
   const ids = [...selected];
   const album = albums.data?.find((a) => a.id === albumId);
+  const allTrashSelected = view === "trash" && items.length > 0 && items.every((item) => selected.has(item.id));
   const toggle = (id: string) => setSelected((s) => { const n = new Set(s); if (!n.delete(id)) n.add(id); return n; });
   const memItems: MediaItem[] = useMemo(() => (memory ? items.filter((m) => memory.includes(m.id)) : []), [memory, items]);
   const btn = "flex items-center gap-2 rounded-full px-3 py-2 text-sm hover:bg-neutral-100 dark:hover:bg-neutral-800";
@@ -128,7 +129,13 @@ export default function Photos() {
           {hiddenStatus.data?.unlocked && <button className="ml-auto rounded-full border border-neutral-300 px-4 py-1.5 text-sm hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-800" onClick={() => lockHidden.mutate()}>Lock now</button>}
         </div>
       ) : view === "trash" ? (
-        <p className="mb-4 rounded-lg bg-neutral-100 px-4 py-3 text-sm dark:bg-neutral-800">Items in trash are deleted from your NAS after 30 days.</p>
+        <div className="mb-4 flex items-center justify-between gap-3 rounded-lg bg-neutral-100 px-4 py-3 dark:bg-neutral-800">
+          <p className="text-sm">Items in trash are deleted from your NAS after 30 days.</p>
+          <button disabled={!items.length} className="shrink-0 rounded-full px-3 py-1.5 text-sm font-medium text-brand hover:bg-white disabled:opacity-50 dark:hover:bg-neutral-700"
+            onClick={() => setSelected(allTrashSelected ? new Set() : new Set(items.map((item) => item.id)))}>
+            {allTrashSelected ? "Deselect all" : "Select all"}
+          </button>
+        </div>
       ) : (
         <div className="mb-4 flex flex-wrap gap-2" role="tablist">
           {TABS.map((t) => (
