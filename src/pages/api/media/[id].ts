@@ -4,6 +4,7 @@ import fs from "fs";
 import fsp from "fs/promises";
 import { authOptions } from "~/server/auth";
 import { findViewable, safeJoin } from "~/server/storage";
+import { ensureThumb } from "~/server/thumbs";
 
 /** Streams originals and thumbnails with HTTP byte-range support (needed for video seeking). */
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
@@ -12,15 +13,23 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const m = await findViewable(session.user.id, String(req.query.id));
   if (!m) return res.status(404).end();
 
-  const thumb = req.query.thumb === "1" && !!m.thumbRel;
+  let thumb = req.query.thumb === "1" && !!m.thumbRel;
   let file: string;
-  try { file = safeJoin(thumb ? m.thumbRel! : m.relPath); } catch { return res.status(400).end(); }
+  try {
+    if (thumb) {
+      // Uploads reply before the thumbnail exists; if the grid asks first, wait for the queued job (or run it now).
+      const ok = await ensureThumb({ id: m.id, relPath: m.relPath, thumbRel: m.thumbRel! });
+      thumb = ok;
+    }
+    file = safeJoin(thumb ? m.thumbRel! : m.relPath);
+  } catch { return res.status(400).end(); }
   const stat = await fsp.stat(file).catch(() => null);
   if (!stat) return res.status(404).end();
 
   res.setHeader("Accept-Ranges", "bytes");
   res.setHeader("Content-Type", thumb ? "image/webp" : m.mime);
-  res.setHeader("Cache-Control", "private, max-age=3600");
+  // A thumbnail never changes for a given photo, so the browser can keep it for good.
+  res.setHeader("Cache-Control", thumb ? "private, max-age=31536000, immutable" : "private, max-age=3600");
   if (req.query.download === "1")
     res.setHeader("Content-Disposition", `attachment; filename*=UTF-8''${encodeURIComponent(m.filename)}`);
 

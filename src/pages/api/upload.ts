@@ -10,6 +10,7 @@ import exifr from "exifr";
 import { authOptions } from "~/server/auth";
 import { db } from "~/server/db";
 import { safeJoin } from "~/server/storage";
+import { ensureThumb } from "~/server/thumbs";
 
 export const config = { api: { bodyParser: false } };
 
@@ -35,9 +36,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const tmp = safeJoin(path.join(user.username, ".tmp", crypto.randomUUID()));
   await fsp.mkdir(path.dirname(tmp), { recursive: true });
   const hash = crypto.createHash("sha256");
-  req.on("data", (c) => hash.update(c));
-  try { await pipeline(req, fs.createWriteStream(tmp)); }
-  catch { await fsp.rm(tmp, { force: true }); return res.status(400).json({ error: "Upload interrupted" }); }
+  try {
+    // Hash while streaming to disk: no second pass over the file. Big write buffer = fewer syscalls on NAS disks.
+    await pipeline(
+      req,
+      async function* (src: AsyncIterable<Buffer>) { for await (const c of src) { hash.update(c); yield c; } },
+      fs.createWriteStream(tmp, { highWaterMark: 1 << 20 }),
+    );
+  } catch { await fsp.rm(tmp, { force: true }); return res.status(400).json({ error: "Upload interrupted" }); }
   const sha = hash.digest("hex");
 
   const dup = await db.media.findUnique({ where: { userId_sha256: { userId: user.id, sha256: sha } } });
@@ -51,7 +57,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   if (!isVideo) {
     try {
-      const ex = await exifr.parse(tmp, { gps: true });
+      // Only the blocks we use: skipping XMP/ICC/maker notes makes parsing much cheaper on big photos.
+      const ex = await exifr.parse(tmp, {
+        gps: true, tiff: true, exif: true,
+        xmp: false, icc: false, iptc: false, jfif: false, ihdr: false, ifd1: false, interop: false, makerNote: false, userComment: false,
+      });
       if (ex) {
         if (ex.DateTimeOriginal instanceof Date) takenAt = ex.DateTimeOriginal;
         if (typeof ex.latitude === "number") { lat = ex.latitude; lng = ex.longitude; }
@@ -60,13 +70,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       }
     } catch { /* no EXIF */ }
     try {
-      const meta = await sharp(tmp).metadata();
+      const meta = await sharp(tmp).metadata(); // header only, cheap
       const swap = (meta.orientation ?? 1) >= 5;
       width = (swap ? meta.height : meta.width) ?? null;
       height = (swap ? meta.width : meta.height) ?? null;
-      thumbRel = path.join(user.username, ".thumbs", `${id}.webp`);
-      await fsp.mkdir(path.dirname(safeJoin(thumbRel)), { recursive: true });
-      await sharp(tmp).rotate().resize({ height: 360, withoutEnlargement: true }).webp({ quality: 78 }).toFile(safeJoin(thumbRel));
+      thumbRel = path.join(user.username, ".thumbs", `${id}.webp`); // generated after the response, see ensureThumb below
     } catch { thumbRel = null; /* e.g. HEIC without libheif: original still served */ }
   }
 
@@ -75,9 +83,23 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   await fsp.mkdir(path.dirname(safeJoin(rel)), { recursive: true });
   await fsp.rename(tmp, safeJoin(rel));
 
-  const m = await db.media.create({ data: {
-    id, userId: user.id, filename, relPath: rel, thumbRel, mime, category, size: BigInt(stat.size), sha256: sha,
-    width, height, takenAt, lat, lng, camera,
-  } });
-  res.json({ id: m.id, thumb: !!thumbRel, duplicate: false });
+  let m;
+  try {
+    m = await db.media.create({ data: {
+      id, userId: user.id, filename, relPath: rel, thumbRel, mime, category, size: BigInt(stat.size), sha256: sha,
+      width, height, takenAt, lat, lng, camera,
+    } });
+  } catch (e) {
+    // Two identical files uploaded at the same moment: the other request won the unique (userId, sha256) race.
+    await fsp.rm(safeJoin(rel), { force: true });
+    if ((e as { code?: string }).code === "P2002") {
+      const again = await db.media.findUnique({ where: { userId_sha256: { userId: user.id, sha256: sha } } });
+      return res.json({ duplicate: true, id: again?.id });
+    }
+    throw e;
+  }
+
+  // Reply now; the thumbnail is built in the background through a small queue (and on demand if the grid asks first).
+  if (thumbRel) void ensureThumb({ id, relPath: rel, thumbRel });
+  res.json({ id: m.id, duplicate: false });
 }
