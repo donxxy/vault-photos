@@ -22,6 +22,7 @@ const LockIcon = () => (
 export default function Albums() {
   const router = useRouter();
   const shared = router.query.tab === "shared";
+  const hiddenTab = router.query.tab === "hidden";
   const utils = api.useContext();
   const { data, isLoading } = api.album.list.useQuery();
   const [dlg, setDlg] = useState<Dlg>(null);
@@ -42,7 +43,7 @@ export default function Albums() {
   const removeLock = api.album.removeLock.useMutation();
   const lockNow = api.album.lockNow.useMutation({ onSuccess: refresh });
 
-  const albums = (data ?? []).filter((a) => (shared ? !a.mine || a.sharedWith.length > 0 : a.mine));
+  const albums = (data ?? []).filter((a) => hiddenTab ? a.mine && a.locked : shared ? !a.mine || a.sharedWith.length > 0 : a.mine);
   const link = "rounded px-2 py-1 text-xs text-brand hover:bg-blue-50 dark:hover:bg-blue-950";
   const closeDlg = () => { setDlg(null); setErr(""); };
   const dlgAlbum = dlg && "id" in dlg ? data?.find((a) => a.id === dlg.id) : undefined;
@@ -72,16 +73,16 @@ export default function Albums() {
   return (
     <AppShell>
       <div className="mb-5 flex flex-wrap items-center gap-3">
-        <h1 className="text-2xl">{shared ? "Sharing" : "Albums"}</h1>
+        <h1 className="text-2xl">{shared ? "Sharing" : hiddenTab ? "Hidden" : "Albums"}</h1>
+        {!shared && !hiddenTab && <button className="flex items-center gap-1 rounded-full border border-neutral-300 px-4 py-1.5 text-sm hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-800"
+          onClick={() => { const name = prompt("Album name"); if (name) create.mutate({ name }); }}><Ic.Plus /> New album</button>}
         {!shared && <>
-          <button className="flex items-center gap-1 rounded-full border border-neutral-300 px-4 py-1.5 text-sm hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-800"
-            onClick={() => { const name = prompt("Album name"); if (name) create.mutate({ name }); }}><Ic.Plus /> New album</button>
           <button className="flex items-center gap-1 rounded-full border border-neutral-300 px-4 py-1.5 text-sm hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-800"
             onClick={() => { const name = prompt("Hidden album name"); if (name) setDlg({ kind: "newHidden", name }); }}><Ic.Plus /> New hidden album</button>
         </>}
       </div>
       {isLoading ? null : albums.length === 0 ? (
-        <p className="mt-16 text-center text-sm text-neutral-500">{shared ? "Albums you share, or that others share with you, appear here." : "No albums yet. Select photos on the Photos page and choose Add to album."}</p>
+        <p className="mt-16 text-center text-sm text-neutral-500">{shared ? "Albums you share, or that others share with you, appear here." : hiddenTab ? "No hidden albums yet. Select photos and choose Hide to get started." : "No albums yet. Select photos on the Photos page and choose Add to album."}</p>
       ) : (
         <ul className="grid grid-cols-2 gap-5 sm:grid-cols-3 lg:grid-cols-5">
           {albums.map((a) => {

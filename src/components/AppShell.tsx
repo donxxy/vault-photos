@@ -12,6 +12,7 @@ type Ctx = { v?: string; p: string; tab?: string; album?: string };
 const NAV = [
   { href: "/", label: "Photos", icon: <Ic.Photo />, tab: true, match: ({ v, p, album }: Ctx) => p === "/" && !v && !album },
   { href: "/albums", label: "Albums", icon: <Ic.Album />, tab: true, match: ({ p, tab, album }: Ctx) => (p === "/albums" && tab !== "shared") || (p === "/" && !!album) },
+  { href: "/albums?tab=hidden", label: "Hidden", icon: <Ic.Lock />, tab: false, match: ({ p, tab }: Ctx) => p === "/albums" && tab === "hidden" },
   { href: "/albums?tab=shared", label: "Sharing", icon: <Ic.People />, tab: true, match: ({ p, tab }: Ctx) => p === "/albums" && tab === "shared" },
   { href: "/?view=favorites", label: "Favorites", icon: <Ic.Star />, tab: false, match: ({ v }: Ctx) => v === "favorites" },
   { href: "/?view=trash", label: "Trash", icon: <Ic.Trash />, tab: false, match: ({ v }: Ctx) => v === "trash" },
