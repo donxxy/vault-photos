@@ -4,9 +4,56 @@ import fsp from "fs/promises";
 import { z } from "zod";
 import { createTRPCRouter, adminProcedure } from "../trpc";
 import { registerInput } from "./auth";
-import { safeJoin } from "~/server/storage";
+import { getUploadSubdir, normalizeUploadSubdir, ROOT, safeJoin, UPLOAD_SUBDIR_KEY } from "~/server/storage";
+import { getContainerMetrics } from "~/server/container-metrics";
 
 export const adminRouter = createTRPCRouter({
+  dashboard: adminProcedure.query(async ({ ctx }) => {
+    const [uploadSubdir, metrics, usage] = await Promise.all([
+      getUploadSubdir(),
+      getContainerMetrics(),
+      ctx.db.media.aggregate({ _sum: { size: true }, _count: true }),
+    ]);
+    let totalBytes = 0, freeBytes = 0;
+    try {
+      const disk = await fsp.statfs(ROOT);
+      totalBytes = Number(disk.blocks) * Number(disk.bsize);
+      freeBytes = Number(disk.bavail) * Number(disk.bsize);
+    } catch (error) {
+      if (!(error instanceof Error) || !("code" in error) || !["ENOSYS", "EACCES", "EPERM"].includes(String(error.code)))
+        throw error;
+    }
+    return {
+      ...metrics,
+      storage: {
+        root: ROOT,
+        uploadSubdir,
+        totalBytes,
+        freeBytes,
+        usedBytes: totalBytes - freeBytes,
+        libraryBytes: Number(usage._sum.size ?? 0),
+        mediaCount: usage._count,
+      },
+    };
+  }),
+
+  setUploadSubdir: adminProcedure.input(z.object({ folder: z.string().trim().max(120) }))
+    .mutation(async ({ ctx, input }) => {
+      let folder: string;
+      try {
+        folder = normalizeUploadSubdir(input.folder);
+      } catch {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "Choose a folder inside the mounted photo share." });
+      }
+      if (folder) await fsp.mkdir(safeJoin(folder), { recursive: true });
+      await ctx.db.appSetting.upsert({
+        where: { key: UPLOAD_SUBDIR_KEY },
+        create: { key: UPLOAD_SUBDIR_KEY, value: folder },
+        update: { value: folder },
+      });
+      return { folder };
+    }),
+
   users: adminProcedure.query(async ({ ctx }) => {
     const [users, usage] = await Promise.all([
       ctx.db.user.findMany({ orderBy: { createdAt: "asc" } }),

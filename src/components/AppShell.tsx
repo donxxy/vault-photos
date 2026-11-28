@@ -18,6 +18,7 @@ const NAV = [
   { href: "/?view=trash", label: "Trash", icon: <Ic.Trash />, tab: false, match: ({ v }: Ctx) => v === "trash" },
 ];
 const ADMIN = { href: "/admin", label: "Admin", icon: <Ic.Shield />, tab: false, match: ({ p }: Ctx) => p === "/admin" };
+const DASHBOARD = { href: "/dashboard", label: "Dashboard", icon: <Ic.Gauge />, tab: false, match: ({ p }: Ctx) => p === "/dashboard" };
 
 function Storage() {
   const { data } = api.media.stats.useQuery(undefined, { refetchInterval: 30000 });
@@ -98,7 +99,7 @@ export function AppShell({ children, headerOverride }: { children: ReactNode; he
     p: router.pathname, v: typeof q.view === "string" ? q.view : undefined,
     tab: typeof q.tab === "string" ? q.tab : undefined, album: typeof q.album === "string" ? q.album : undefined,
   };
-  const nav = session.user.role === "ADMIN" ? [...NAV, ADMIN] : NAV;
+  const nav = session.user.role === "ADMIN" ? [...NAV, DASHBOARD, ADMIN] : NAV;
   const moreItems = nav.filter((n) => !n.tab);
   const moreActive = moreItems.some((n) => n.match(ctx));
 

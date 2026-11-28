@@ -4,6 +4,30 @@ import { db } from "./db";
 import { HIDDEN_UNLOCK_KEY } from "./unlock";
 
 export const ROOT = path.resolve(process.env.STORAGE_ROOT ?? "./storage");
+export const UPLOAD_SUBDIR_KEY = "upload_subdir";
+
+export async function getUploadSubdir() {
+  const setting = await db.appSetting.findUnique({ where: { key: UPLOAD_SUBDIR_KEY } });
+  return setting?.value ?? "";
+}
+
+export function normalizeUploadSubdir(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+  const normalized = path.normalize(trimmed);
+  const resolved = path.resolve(ROOT, normalized);
+  if (
+    path.isAbsolute(trimmed) ||
+    normalized === "." ||
+    normalized === ".." ||
+    normalized.startsWith(`..${path.sep}`) ||
+    !resolved.startsWith(ROOT + path.sep) ||
+    normalized.split(path.sep).some((part) => part === ".tmp" || part === ".thumbs")
+  ) {
+    throw new Error("Choose a folder inside the mounted photo share.");
+  }
+  return path.relative(ROOT, resolved);
+}
 
 /** Resolve a path stored in the DB, refusing anything that escapes the storage root. */
 export function safeJoin(rel: string) {

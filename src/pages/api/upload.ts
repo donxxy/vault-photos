@@ -9,7 +9,7 @@ import sharp from "sharp";
 import exifr from "exifr";
 import { authOptions } from "~/server/auth";
 import { db } from "~/server/db";
-import { safeJoin } from "~/server/storage";
+import { getUploadSubdir, safeJoin } from "~/server/storage";
 import { ensureThumb } from "~/server/thumbs";
 
 export const config = { api: { bodyParser: false } };
@@ -33,7 +33,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const used = Number((await db.media.aggregate({ where: { userId: user.id }, _sum: { size: true } }))._sum.size ?? 0);
   if (used + incoming > Number(user.quotaBytes)) return res.status(413).json({ error: "Storage quota reached" });
 
-  const tmp = safeJoin(path.join(user.username, ".tmp", crypto.randomUUID()));
+  const uploadSubdir = await getUploadSubdir();
+  const userPath = path.join(uploadSubdir, user.username);
+  const tmp = safeJoin(path.join(userPath, ".tmp", crypto.randomUUID()));
   await fsp.mkdir(path.dirname(tmp), { recursive: true });
   const hash = crypto.createHash("sha256");
   try {
@@ -74,12 +76,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       const swap = (meta.orientation ?? 1) >= 5;
       width = (swap ? meta.height : meta.width) ?? null;
       height = (swap ? meta.width : meta.height) ?? null;
-      thumbRel = path.join(user.username, ".thumbs", `${id}.webp`); // generated after the response, see ensureThumb below
+      thumbRel = path.join(userPath, ".thumbs", `${id}.webp`); // generated after the response, see ensureThumb below
     } catch { thumbRel = null; /* e.g. HEIC without libheif: original still served */ }
   }
 
   const category = isVideo ? "VIDEO" : mime === "image/png" && !hasMake ? "SCREENSHOT" : "PHOTO";
-  const rel = path.join(user.username, String(takenAt.getFullYear()), String(takenAt.getMonth() + 1).padStart(2, "0"), `${id}-${filename}`);
+  const rel = path.join(userPath, String(takenAt.getFullYear()), String(takenAt.getMonth() + 1).padStart(2, "0"), `${id}-${filename}`);
   await fsp.mkdir(path.dirname(safeJoin(rel)), { recursive: true });
   await fsp.rename(tmp, safeJoin(rel));
 

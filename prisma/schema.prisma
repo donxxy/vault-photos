@@ -84,3 +84,8 @@ model AlbumShare {
 
   @@id([albumId, userId])
 }
+
+model AppSetting {
+  key   String @id
+  value String
+}
