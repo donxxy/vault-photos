@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/router";
 import { AppShell } from "~/components/AppShell";
 import { api } from "~/utils/api";
-import { fmtBytes } from "~/utils/format";
+import { fmtBytes, fmtUploaded } from "~/utils/format";
 
 function Meter({ percent, color = "bg-brand" }: { percent: number | null; color?: string }) {
   const value = percent === null ? 0 : Math.max(0, Math.min(100, percent));
@@ -16,6 +16,8 @@ function Meter({ percent, color = "bg-brand" }: { percent: number | null; color?
 export default function Dashboard() {
   const router = useRouter();
   const data = api.admin.dashboard.useQuery(undefined, { retry: false, refetchInterval: 5000 });
+  const users = api.admin.users.useQuery(undefined, { retry: false, refetchInterval: 30000 });
+  const uploads = api.admin.uploadActivity.useQuery(undefined, { retry: false, refetchInterval: 10000 });
   const utils = api.useContext();
   const [folder, setFolder] = useState("");
   const [folderLoaded, setFolderLoaded] = useState(false);
@@ -34,8 +36,8 @@ export default function Dashboard() {
       setFolder(data.data.storage.uploadSubdir);
       setFolderLoaded(true);
     }
-    if (data.error?.data?.code === "FORBIDDEN") void router.replace("/");
-  }, [data.data, data.error, folderLoaded, router]);
+    if ([data.error, users.error, uploads.error].some((error) => error?.data?.code === "FORBIDDEN")) void router.replace("/");
+  }, [data.data, data.error, folderLoaded, router, users.error, uploads.error]);
 
   const d = data.data;
   const diskPct = d?.storage.totalBytes ? d.storage.usedBytes / d.storage.totalBytes * 100 : null;
@@ -102,6 +104,56 @@ export default function Dashboard() {
               </button>
             </form>
             {message && <p role={saveFolder.error ? "alert" : "status"} className={`mt-3 text-sm ${saveFolder.error ? "text-red-600" : "text-green-700 dark:text-green-400"}`}>{message}</p>}
+          </section>
+
+          <section className="mt-8">
+            <h2 className="mb-3 text-xl font-medium">Users</h2>
+            <p className="mb-3 text-sm text-neutral-500">Upload totals and most recent upload for each account.</p>
+            {users.error && <p role="alert" className="mb-3 text-sm text-red-600">{users.error.message}</p>}
+            <div className="overflow-x-auto rounded-xl border border-neutral-200 dark:border-neutral-700">
+              <table className="w-full min-w-[600px] text-left text-sm">
+                <thead className="bg-neutral-50 text-xs text-neutral-500 dark:bg-neutral-800">
+                  <tr><th className="px-4 py-3">User</th><th>Role</th><th>Uploads</th><th>Storage used</th><th>Last upload</th></tr>
+                </thead>
+                <tbody>
+                  {users.data?.map((user) => (
+                    <tr key={user.id} className="border-t border-neutral-200 dark:border-neutral-800">
+                      <td className="px-4 py-3"><span className="font-medium">{user.name}</span><span className="ml-2 text-neutral-500">@{user.username}</span></td>
+                      <td>{user.role === "ADMIN" ? "Admin" : "Member"}</td>
+                      <td>{user.items}</td>
+                      <td>{fmtBytes(user.used)}</td>
+                      <td>{user.lastUploadAt ? fmtUploaded(user.lastUploadAt) : "Never"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <section className="mt-8">
+            <h2 className="mb-3 text-xl font-medium">Recent uploads</h2>
+            <p className="mb-3 text-sm text-neutral-500">Latest 50 non-hidden uploads. This activity list contains file metadata only—no thumbnails or image access.</p>
+            {uploads.error && <p role="alert" className="mb-3 text-sm text-red-600">{uploads.error.message}</p>}
+            {uploads.data?.length ? (
+              <div className="overflow-x-auto rounded-xl border border-neutral-200 dark:border-neutral-700">
+                <table className="w-full min-w-[640px] text-left text-sm">
+                  <thead className="bg-neutral-50 text-xs text-neutral-500 dark:bg-neutral-800">
+                    <tr><th className="px-4 py-3">User</th><th>File</th><th>Type</th><th>Size</th><th>Uploaded</th></tr>
+                  </thead>
+                  <tbody>
+                    {uploads.data.map((upload) => (
+                      <tr key={upload.id} className="border-t border-neutral-200 dark:border-neutral-800">
+                        <td className="px-4 py-3">{upload.user.name}<span className="ml-2 text-neutral-500">@{upload.user.username}</span></td>
+                        <td className="max-w-64 truncate" title={upload.filename}>{upload.filename}</td>
+                        <td>{upload.mime}</td>
+                        <td>{fmtBytes(upload.size)}</td>
+                        <td>{fmtUploaded(upload.uploadedAt)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : !uploads.isLoading && <p className="rounded-xl border border-neutral-200 p-5 text-sm text-neutral-500 dark:border-neutral-700">No recent uploads.</p>}
           </section>
         </>
       )}

@@ -57,13 +57,29 @@ export const adminRouter = createTRPCRouter({
   users: adminProcedure.query(async ({ ctx }) => {
     const [users, usage] = await Promise.all([
       ctx.db.user.findMany({ orderBy: { createdAt: "asc" } }),
-      ctx.db.media.groupBy({ by: ["userId"], _sum: { size: true }, _count: true }),
+      ctx.db.media.groupBy({ by: ["userId"], _sum: { size: true }, _count: true, _max: { uploadedAt: true } }),
     ]);
     return users.map((u) => {
       const g = usage.find((x) => x.userId === u.id);
       return { id: u.id, username: u.username, name: u.name, role: u.role, quotaBytes: Number(u.quotaBytes),
-        used: Number(g?._sum.size ?? 0), items: g?._count ?? 0 };
+        used: Number(g?._sum.size ?? 0), items: g?._count ?? 0, lastUploadAt: g?._max.uploadedAt ?? null };
     });
+  }),
+
+  uploadActivity: adminProcedure.query(async ({ ctx }) => {
+    const uploads = await ctx.db.media.findMany({
+      where: {
+        deletedAt: null, hiddenAt: null,
+        albums: { none: { album: { lockHash: { not: null } } } },
+      },
+      orderBy: { uploadedAt: "desc" },
+      take: 50,
+      select: {
+        id: true, filename: true, mime: true, size: true, uploadedAt: true,
+        user: { select: { name: true, username: true } },
+      },
+    });
+    return uploads.map((upload) => ({ ...upload, size: Number(upload.size) }));
   }),
 
   createUser: adminProcedure.input(registerInput.extend({ role: z.enum(["ADMIN", "USER"]).default("USER") }))
