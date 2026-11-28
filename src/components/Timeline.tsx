@@ -4,6 +4,11 @@ import type { MediaItem } from "~/utils/api";
 import * as Ic from "./icons";
 
 const GAP = 4;
+// Photo row heights (px) for each zoom step. Pinching on the grid moves between them, like Google Photos.
+const STEPS_PHONE = [60, 85, 120, 170, 240];
+const STEPS_WIDE = [110, 160, 220, 300, 360];
+const DEFAULT_STEP = 2;
+const STORE = "volta-grid-zoom";
 
 function layoutRows(items: MediaItem[], width: number, target: number) {
   const rows: { items: MediaItem[]; h: number }[] = [];
@@ -34,6 +39,13 @@ export function Timeline({ items, selected, onToggle, onOpen }: Props) {
   const groups = useMemo(() => groupByDate(items), [items]);
   const indexOf = useMemo(() => new Map(items.map((m, i) => [m.id, i])), [items]);
   const selecting = selected.size > 0;
+  const [step, setStep] = useState(() => {
+    try {
+      const v = Number(localStorage.getItem(STORE));
+      return Number.isInteger(v) && v >= 0 && v < STEPS_WIDE.length ? v : DEFAULT_STEP;
+    } catch { return DEFAULT_STEP; }
+  });
+  useEffect(() => { try { localStorage.setItem(STORE, String(step)); } catch { /* private mode */ } }, [step]);
 
   useEffect(() => {
     const el = box.current; if (!el) return;
@@ -57,10 +69,37 @@ export function Timeline({ items, selected, onToggle, onOpen }: Props) {
     return () => { window.removeEventListener("scroll", onScroll); clearTimeout(hideTimer.current); };
   }, []);
 
-  const target = width < 640 ? 120 : 220;
+  // Pinch on the grid changes the photo size instead of zooming the whole page.
+  useEffect(() => {
+    const el = box.current; if (!el) return;
+    const last = STEPS_WIDE.length - 1;
+    let base = 0; // finger distance when the current step started
+    const dist = (t: TouchList) =>
+      Math.hypot((t[0]?.clientX ?? 0) - (t[1]?.clientX ?? 0), (t[0]?.clientY ?? 0) - (t[1]?.clientY ?? 0));
+    const start = (e: TouchEvent) => { base = e.touches.length === 2 ? dist(e.touches) : 0; };
+    const move = (e: TouchEvent) => {
+      if (e.touches.length !== 2 || !base) return;
+      e.preventDefault();
+      const ratio = dist(e.touches) / base;
+      if (ratio > 1.3) { setStep((s) => Math.min(last, s + 1)); base = dist(e.touches); }      // fingers apart: bigger photos
+      else if (ratio < 0.77) { setStep((s) => Math.max(0, s - 1)); base = dist(e.touches); }  // fingers together: smaller photos
+    };
+    const end = (e: TouchEvent) => { if (e.touches.length < 2) base = 0; };
+    el.addEventListener("touchstart", start, { passive: true });
+    el.addEventListener("touchmove", move, { passive: false });
+    el.addEventListener("touchend", end);
+    el.addEventListener("touchcancel", end);
+    return () => {
+      el.removeEventListener("touchstart", start); el.removeEventListener("touchmove", move);
+      el.removeEventListener("touchend", end); el.removeEventListener("touchcancel", end);
+    };
+  }, []);
+
+  const steps = width < 640 ? STEPS_PHONE : STEPS_WIDE;
+  const target = steps[step] ?? steps[DEFAULT_STEP] ?? 120;
 
   return (
-    <div ref={box} className="relative pr-6">
+    <div ref={box} className="relative pr-6" style={{ touchAction: "pan-y" }}>
       {width > 0 && groups.map((g) => (
         <section key={g.key} data-pill={g.pill} className="mb-8">
           <h2 className="sticky top-16 z-10 mb-2 flex items-baseline gap-2 bg-white/90 py-2 backdrop-blur dark:bg-[#121212]/90">
